@@ -351,8 +351,183 @@ async function insertTestData() {
   }
 }
 
-// --- RUTAS DE EJEMPLO (Se desarrollarán más a fondo en Capítulos posteriores) ---
-// Por ahora, solo una ruta básica para verificar que el servidor funciona.
+// --- RUTAS API PARA PRODUCTOS ---
+
+// 3.1. Ruta GET para obtener todos los productos
+app.get("/api/productos", async (req, res) => {
+  try {
+    // Incluimos la categoría para poder mostrar el nombre de la categoría en el frontend
+    const productos = await Producto.findAll({
+      include: [
+        {
+          model: Categoria,
+          attributes: ["nombre"], // Solo queremos el nombre de la categoría
+        },
+      ],
+    });
+    return res.status(200).json(productos);
+  } catch (error) {
+    console.error("Error al obtener productos:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al obtener productos.",
+        error: error.message,
+      });
+  }
+});
+
+// 3.2. Ruta POST para crear un nuevo producto
+app.post("/api/productos", async (req, res) => {
+  const {
+    nombre,
+    descripcion,
+    precio_venta,
+    costo_compra,
+    stock,
+    categoria_id,
+  } = req.body;
+
+  // Validación básica
+  if (!nombre || !precio_venta || !categoria_id) {
+    return res
+      .status(400)
+      .json({
+        message: "Nombre, precio de venta y ID de categoría son obligatorios.",
+      });
+  }
+
+  try {
+    const nuevoProducto = await Producto.create({
+      nombre,
+      descripcion,
+      precio_venta,
+      costo_compra,
+      stock,
+      categoria_id,
+    });
+    return res.status(201).json(nuevoProducto); // 201 Created
+  } catch (error) {
+    console.error("Error al crear producto:", error);
+    // Si el error es por nombre duplicado (unique: true en el modelo)
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(409)
+        .json({ message: "Ya existe un producto con este nombre." });
+    }
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al crear producto.",
+        error: error.message,
+      });
+  }
+});
+
+// 3.3. Ruta GET para obtener un producto por ID
+app.get("/api/productos/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const producto = await Producto.findByPk(id, {
+      include: [
+        {
+          model: Categoria,
+          attributes: ["nombre"],
+        },
+      ],
+    });
+    if (!producto) {
+      return res.status(404).json({ message: "Producto no encontrado." });
+    }
+    return res.status(200).json(producto);
+  } catch (error) {
+    console.error("Error al obtener producto por ID:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al obtener producto.",
+        error: error.message,
+      });
+  }
+});
+
+// 3.4. Ruta PUT para actualizar un producto existente
+app.put("/api/productos/:id", async (req, res) => {
+  const { id } = req.params;
+  const {
+    nombre,
+    descripcion,
+    precio_venta,
+    costo_compra,
+    stock,
+    categoria_id,
+  } = req.body;
+
+  try {
+    const producto = await Producto.findByPk(id);
+    if (!producto) {
+      return res
+        .status(404)
+        .json({ message: "Producto no encontrado para actualizar." });
+    }
+
+    // Actualiza solo los campos que se proporcionan en el body
+    producto.nombre = nombre !== undefined ? nombre : producto.nombre;
+    producto.descripcion =
+      descripcion !== undefined ? descripcion : producto.descripcion;
+    producto.precio_venta =
+      precio_venta !== undefined ? precio_venta : producto.precio_venta;
+    producto.costo_compra =
+      costo_compra !== undefined ? costo_compra : producto.costo_compra;
+    producto.stock = stock !== undefined ? stock : producto.stock;
+    producto.categoria_id =
+      categoria_id !== undefined ? categoria_id : producto.categoria_id;
+
+    await producto.save(); // Guarda los cambios en la base de datos
+    return res.status(200).json(producto);
+  } catch (error) {
+    console.error("Error al actualizar producto:", error);
+    // Si el error es por nombre duplicado al actualizar (unique: true)
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(409)
+        .json({ message: "Ya existe otro producto con este nombre." });
+    }
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al actualizar producto.",
+        error: error.message,
+      });
+  }
+});
+
+// 3.5. Ruta DELETE para eliminar un producto
+app.delete("/api/productos/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const productoEliminado = await Producto.destroy({
+      where: { id: id },
+    });
+
+    if (productoEliminado === 0) {
+      // Si no se eliminó ningún registro
+      return res
+        .status(404)
+        .json({ message: "Producto no encontrado para eliminar." });
+    }
+    return res.status(204).send(); // 204 No Content (éxito sin cuerpo de respuesta)
+  } catch (error) {
+    console.error("Error al eliminar producto:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al eliminar producto.",
+        error: error.message,
+      });
+  }
+});
+//Ruta básica para verificar que el servidor funciona.
 app.get("/", (req, res) => {
   res.send("Backend del POS de Santísima Pizzería funcionando!");
 });
