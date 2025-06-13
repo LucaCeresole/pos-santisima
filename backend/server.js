@@ -368,12 +368,10 @@ app.get("/api/productos", async (req, res) => {
     return res.status(200).json(productos);
   } catch (error) {
     console.error("Error al obtener productos:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al obtener productos.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener productos.",
+      error: error.message,
+    });
   }
 });
 
@@ -390,11 +388,9 @@ app.post("/api/productos", async (req, res) => {
 
   // Validación básica
   if (!nombre || !precio_venta || !categoria_id) {
-    return res
-      .status(400)
-      .json({
-        message: "Nombre, precio de venta y ID de categoría son obligatorios.",
-      });
+    return res.status(400).json({
+      message: "Nombre, precio de venta y ID de categoría son obligatorios.",
+    });
   }
 
   try {
@@ -415,12 +411,10 @@ app.post("/api/productos", async (req, res) => {
         .status(409)
         .json({ message: "Ya existe un producto con este nombre." });
     }
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al crear producto.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al crear producto.",
+      error: error.message,
+    });
   }
 });
 
@@ -442,12 +436,10 @@ app.get("/api/productos/:id", async (req, res) => {
     return res.status(200).json(producto);
   } catch (error) {
     console.error("Error al obtener producto por ID:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al obtener producto.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener producto.",
+      error: error.message,
+    });
   }
 });
 
@@ -493,12 +485,10 @@ app.put("/api/productos/:id", async (req, res) => {
         .status(409)
         .json({ message: "Ya existe otro producto con este nombre." });
     }
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al actualizar producto.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al actualizar producto.",
+      error: error.message,
+    });
   }
 });
 
@@ -519,10 +509,178 @@ app.delete("/api/productos/:id", async (req, res) => {
     return res.status(204).send(); // 204 No Content (éxito sin cuerpo de respuesta)
   } catch (error) {
     console.error("Error al eliminar producto:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al eliminar producto.",
+      error: error.message,
+    });
+  }
+});
+// 4.1. Ruta GET para obtener todos los clientes
+app.get("/api/clientes", async (req, res) => {
+  try {
+    const clientes = await Cliente.findAll();
+    return res.status(200).json(clientes);
+  } catch (error) {
+    console.error("Error al obtener clientes:", error);
     return res
       .status(500)
       .json({
-        message: "Error interno del servidor al eliminar producto.",
+        message: "Error interno del servidor al obtener clientes.",
+        error: error.message,
+      });
+  }
+});
+
+// 4.2. Ruta GET para buscar clientes por nombre/teléfono
+app.get("/api/clientes/buscar", async (req, res) => {
+  const { query } = req.query; // Obtener el parámetro 'query' de la URL (ej: /api/clientes/buscar?query=juan)
+
+  if (!query) {
+    return res
+      .status(400)
+      .json({ message: "Se requiere un parámetro de búsqueda (query)." });
+  }
+
+  try {
+    const clientes = await Cliente.findAll({
+      where: {
+        // Buscar si el query coincide parcial o totalmente con nombre, apellido o teléfono
+        [Sequelize.Op.or]: [
+          { nombre: { [Sequelize.Op.like]: `%${query}%` } },
+          { apellido: { [Sequelize.Op.like]: `%${query}%` } },
+          { telefono: { [Sequelize.Op.like]: `%${query}%` } },
+        ],
+      },
+    });
+    return res.status(200).json(clientes);
+  } catch (error) {
+    console.error("Error al buscar clientes:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al buscar clientes.",
+        error: error.message,
+      });
+  }
+});
+
+// 4.3. Ruta POST para crear un nuevo cliente
+app.post("/api/clientes", async (req, res) => {
+  const { nombre, apellido, telefono, direccion, email } = req.body;
+
+  // Validación básica: nombre y teléfono son obligatorios
+  if (!nombre || !telefono) {
+    return res
+      .status(400)
+      .json({ message: "Nombre y teléfono del cliente son obligatorios." });
+  }
+
+  try {
+    const nuevoCliente = await Cliente.create({
+      nombre,
+      apellido,
+      telefono,
+      direccion,
+      email,
+    });
+    return res.status(201).json(nuevoCliente); // 201 Created
+  } catch (error) {
+    console.error("Error al crear cliente:", error);
+    // Si el error es por teléfono o email duplicado (unique: true en el modelo)
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(409)
+        .json({ message: "Ya existe un cliente con este teléfono o email." });
+    }
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al crear cliente.",
+        error: error.message,
+      });
+  }
+});
+
+// 4.4. Ruta GET para obtener un cliente por ID
+app.get("/api/clientes/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const cliente = await Cliente.findByPk(id);
+    if (!cliente) {
+      return res.status(404).json({ message: "Cliente no encontrado." });
+    }
+    return res.status(200).json(cliente);
+  } catch (error) {
+    console.error("Error al obtener cliente por ID:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al obtener cliente.",
+        error: error.message,
+      });
+  }
+});
+
+// 4.5. Ruta PUT para actualizar un cliente existente
+app.put("/api/clientes/:id", async (req, res) => {
+  const { id } = req.params;
+  const { nombre, apellido, telefono, direccion, email } = req.body;
+
+  try {
+    const cliente = await Cliente.findByPk(id);
+    if (!cliente) {
+      return res
+        .status(404)
+        .json({ message: "Cliente no encontrado para actualizar." });
+    }
+
+    // Actualiza solo los campos que se proporcionan en el body
+    cliente.nombre = nombre !== undefined ? nombre : cliente.nombre;
+    cliente.apellido = apellido !== undefined ? apellido : cliente.apellido;
+    cliente.telefono = telefono !== undefined ? telefono : cliente.telefono;
+    cliente.direccion = direccion !== undefined ? direccion : cliente.direccion;
+    cliente.email = email !== undefined ? email : cliente.email;
+
+    await cliente.save(); // Guarda los cambios en la base de datos
+    return res.status(200).json(cliente);
+  } catch (error) {
+    console.error("Error al actualizar cliente:", error);
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(409)
+        .json({ message: "Ya existe otro cliente con este teléfono o email." });
+    }
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al actualizar cliente.",
+        error: error.message,
+      });
+  }
+});
+
+// 4.6. Ruta DELETE para eliminar un cliente
+// Considera si quieres una eliminación "física" o "lógica" (desactivar) en un entorno real.
+app.delete("/api/clientes/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const clienteEliminado = await Cliente.destroy({
+      where: { id: id },
+    });
+
+    if (clienteEliminado === 0) {
+      // Si no se eliminó ningún registro
+      return res
+        .status(404)
+        .json({ message: "Cliente no encontrado para eliminar." });
+    }
+    return res.status(204).send(); // 204 No Content (éxito sin cuerpo de respuesta)
+  } catch (error) {
+    console.error("Error al eliminar cliente:", error);
+    return res
+      .status(500)
+      .json({
+        message: "Error interno del servidor al eliminar cliente.",
         error: error.message,
       });
   }
