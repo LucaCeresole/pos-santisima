@@ -1152,6 +1152,169 @@ app.get("/api/ventas/:id", authenticateJWT, async (req, res) => {
 // No implementamos PUT o DELETE para ventas directamente, ya que suelen manejarse
 // con reversiones o anulaciones, no con modificación o eliminación directa de registros históricos.
 
+// 7.1. Reporte: Resumen de Ventas Diarias
+// Esta ruta requiere autenticación.
+app.get("/api/reportes/ventas-diarias", authenticateJWT, async (req, res) => {
+  try {
+    // Agrupamos las ventas por día y sumamos el total
+    const ventasDiarias = await Venta.findAll({
+      attributes: [
+        [sequelize.fn("date", sequelize.col("fecha_venta")), "fecha"], // Extrae solo la fecha
+        [sequelize.fn("SUM", sequelize.col("total")), "totalVentasDia"], // Suma el total
+        [sequelize.fn("COUNT", sequelize.col("id")), "cantidadVentasDia"], // Cuenta las ventas
+      ],
+      group: [sequelize.fn("date", sequelize.col("fecha_venta"))], // Agrupa por la fecha
+      order: [[sequelize.fn("date", sequelize.col("fecha_venta")), "DESC"]], // Ordena de la más reciente a la más antigua
+    });
+    return res.status(200).json(ventasDiarias);
+  } catch (error) {
+    console.error("Error al obtener reporte de ventas diarias:", error);
+    return res
+      .status(500)
+      .json({
+        message:
+          "Error interno del servidor al obtener reporte de ventas diarias.",
+        error: error.message,
+      });
+  }
+});
+
+// 7.2. Reporte: Total de Ventas por Rango de Fechas
+// Ejemplo de uso: /api/reportes/ventas-por-fecha?start_date=2024-01-01&end_date=2024-12-31
+// Esta ruta requiere autenticación.
+app.get("/api/reportes/ventas-por-fecha", authenticateJWT, async (req, res) => {
+  const { start_date, end_date } = req.query;
+
+  if (!start_date || !end_date) {
+    return res
+      .status(400)
+      .json({
+        message: "Se requieren fechas de inicio (start_date) y fin (end_date).",
+      });
+  }
+
+  try {
+    // Asegurarse de que las fechas sean válidas
+    const startDate = new Date(start_date);
+    const endDate = new Date(end_date);
+    endDate.setHours(23, 59, 59, 999); // Ajustar para incluir todo el día final
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res
+        .status(400)
+        .json({ message: "Formato de fecha inválido. Use YYYY-MM-DD." });
+    }
+
+    const totalVentas = await Venta.sum("total", {
+      where: {
+        fecha_venta: {
+          [Sequelize.Op.between]: [startDate, endDate],
+        },
+      },
+    });
+
+    const cantidadVentas = await Venta.count({
+      where: {
+        fecha_venta: {
+          [Sequelize.Op.between]: [startDate, endDate],
+        },
+      },
+    });
+
+    return res.status(200).json({
+      start_date: start_date,
+      end_date: end_date,
+      total_ventas: totalVentas || 0, // Si no hay ventas, retorna 0
+      cantidad_ventas: cantidadVentas,
+    });
+  } catch (error) {
+    console.error("Error al obtener reporte de ventas por fecha:", error);
+    return res
+      .status(500)
+      .json({
+        message:
+          "Error interno del servidor al obtener reporte de ventas por fecha.",
+        error: error.message,
+      });
+  }
+});
+
+// 7.3. Reporte: Productos Más Vendidos
+// Retorna los productos más vendidos por cantidad total.
+// Esta ruta requiere autenticación.
+app.get(
+  "/api/reportes/productos-mas-vendidos",
+  authenticateJWT,
+  async (req, res) => {
+    try {
+      const productosVendidos = await VentaDetalle.findAll({
+        attributes: [
+          "producto_id",
+          [
+            sequelize.fn("SUM", sequelize.col("cantidad")),
+            "cantidadTotalVendida",
+          ], // Suma la cantidad total vendida
+        ],
+        include: [
+          {
+            model: Producto,
+            attributes: ["nombre", "descripcion"], // Incluir nombre y descripción del producto
+          },
+        ],
+        group: ["producto_id", "Producto.id"], // Agrupar por producto y su ID para incluir el nombre
+        order: [[sequelize.fn("SUM", sequelize.col("cantidad")), "DESC"]], // Ordenar por cantidad vendida descendente
+        limit: 10, // Limitar a los 10 productos más vendidos
+      });
+      return res.status(200).json(productosVendidos);
+    } catch (error) {
+      console.error(
+        "Error al obtener reporte de productos más vendidos:",
+        error
+      );
+      return res
+        .status(500)
+        .json({
+          message:
+            "Error interno del servidor al obtener reporte de productos más vendidos.",
+          error: error.message,
+        });
+    }
+  }
+);
+
+// 7.4. Reporte: Clientes con Más Compras
+// Retorna los clientes que han realizado más compras (por número de ventas).
+// Esta ruta requiere autenticación.
+app.get("/api/reportes/clientes-top", authenticateJWT, async (req, res) => {
+  try {
+    const clientesTop = await Venta.findAll({
+      attributes: [
+        "cliente_id",
+        [sequelize.fn("COUNT", sequelize.col("Venta.id")), "totalCompras"], // Cuenta el número de ventas por cliente
+      ],
+      include: [
+        {
+          model: Cliente,
+          attributes: ["nombre", "apellido", "telefono"], // Incluir datos del cliente
+        },
+      ],
+      group: ["cliente_id", "Cliente.id"], // Agrupar por cliente
+      order: [[sequelize.fn("COUNT", sequelize.col("Venta.id")), "DESC"]], // Ordenar por número de compras descendente
+      limit: 10, // Limitar a los 10 clientes con más compras
+    });
+    return res.status(200).json(clientesTop);
+  } catch (error) {
+    console.error("Error al obtener reporte de clientes top:", error);
+    return res
+      .status(500)
+      .json({
+        message:
+          "Error interno del servidor al obtener reporte de clientes top.",
+        error: error.message,
+      });
+  }
+});
+
 //Ruta básica para verificar que el servidor funciona.
 app.get("/", (req, res) => {
   res.send("Backend del POS de Santísima Pizzería funcionando!");
