@@ -1,9 +1,22 @@
 const express = require("express");
 const { Sequelize, DataTypes } = require("sequelize");
 const path = require("path"); // Módulo para trabajar con rutas de archivos
+const bcrypt = require("bcryptjs"); // <- Nuevo
+const jwt = require("jsonwebtoken"); // <- Nuevo
+const cors = require("cors"); // <- Nuevo
+require("dotenv").config();
 
 const app = express();
 const PORT = 3001; // Puerto en el que se ejecutará nuestro servidor backend
+
+// Configuración de CORS
+const corsOptions = {
+  origin: process.env.FRONTEND_URL, // Permite solicitudes solo desde la URL de tu frontend
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  credentials: true, // Permite el envío de cookies o encabezados de autorización
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
 
 // Middleware para parsear el cuerpo de las solicitudes JSON
 app.use(express.json());
@@ -313,11 +326,14 @@ async function insertTestData() {
   // Verificar y cargar un usuario administrador de prueba
   const usuariosCount = await Usuario.count();
   if (usuariosCount === 0) {
-    // !!! IMPORTANTE: Por ahora, la contraseña 'admin123' se guarda sin hashear.
-    // En el Capítulo 4, implementaremos el hashing seguro con bcrypt.
+    // Generar un hash para la contraseña 'admin123' antes de insertarla
+    const adminPassword = "admin123";
+    const salt = await bcrypt.genSalt(10);
+    const adminPasswordHash = await bcrypt.hash(adminPassword, salt);
+
     await Usuario.create({
       nombre_usuario: "admin",
-      password_hash: "admin123",
+      password_hash: adminPasswordHash, // <-- ¡Ahora guardamos el hash!
       rol: "admin",
     });
     console.log("Usuario administrador de prueba insertado.");
@@ -522,12 +538,10 @@ app.get("/api/clientes", async (req, res) => {
     return res.status(200).json(clientes);
   } catch (error) {
     console.error("Error al obtener clientes:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al obtener clientes.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener clientes.",
+      error: error.message,
+    });
   }
 });
 
@@ -555,12 +569,10 @@ app.get("/api/clientes/buscar", async (req, res) => {
     return res.status(200).json(clientes);
   } catch (error) {
     console.error("Error al buscar clientes:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al buscar clientes.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al buscar clientes.",
+      error: error.message,
+    });
   }
 });
 
@@ -592,12 +604,10 @@ app.post("/api/clientes", async (req, res) => {
         .status(409)
         .json({ message: "Ya existe un cliente con este teléfono o email." });
     }
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al crear cliente.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al crear cliente.",
+      error: error.message,
+    });
   }
 });
 
@@ -612,12 +622,10 @@ app.get("/api/clientes/:id", async (req, res) => {
     return res.status(200).json(cliente);
   } catch (error) {
     console.error("Error al obtener cliente por ID:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al obtener cliente.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener cliente.",
+      error: error.message,
+    });
   }
 });
 
@@ -650,12 +658,10 @@ app.put("/api/clientes/:id", async (req, res) => {
         .status(409)
         .json({ message: "Ya existe otro cliente con este teléfono o email." });
     }
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al actualizar cliente.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al actualizar cliente.",
+      error: error.message,
+    });
   }
 });
 
@@ -677,14 +683,165 @@ app.delete("/api/clientes/:id", async (req, res) => {
     return res.status(204).send(); // 204 No Content (éxito sin cuerpo de respuesta)
   } catch (error) {
     console.error("Error al eliminar cliente:", error);
-    return res
-      .status(500)
-      .json({
-        message: "Error interno del servidor al eliminar cliente.",
-        error: error.message,
-      });
+    return res.status(500).json({
+      message: "Error interno del servidor al eliminar cliente.",
+      error: error.message,
+    });
   }
 });
+// 5.1. Ruta POST para registrar un nuevo usuario (Signup)
+app.post("/api/auth/register", async (req, res) => {
+  const { nombre_usuario, password, rol } = req.body;
+
+  if (!nombre_usuario || !password) {
+    return res
+      .status(400)
+      .json({ message: "Nombre de usuario y contraseña son obligatorios." });
+  }
+
+  try {
+    // Generar un hash de la contraseña antes de guardarla
+    const salt = await bcrypt.genSalt(10); // Genera una "sal" para fortalecer el hash
+    const password_hash = await bcrypt.hash(password, salt); // Hashea la contraseña
+
+    const nuevoUsuario = await Usuario.create({
+      nombre_usuario,
+      password_hash,
+      rol: rol || "vendedor", // Si no se especifica, el rol por defecto es 'vendedor'
+    });
+
+    // No devolvemos el hash de la contraseña en la respuesta
+    const userResponse = {
+      id: nuevoUsuario.id,
+      nombre_usuario: nuevoUsuario.nombre_usuario,
+      rol: nuevoUsuario.rol,
+    };
+
+    return res.status(201).json({
+      message: "Usuario registrado exitosamente.",
+      user: userResponse,
+    });
+  } catch (error) {
+    console.error("Error al registrar usuario:", error);
+    if (error.name === "SequelizeUniqueConstraintError") {
+      return res
+        .status(409)
+        .json({ message: "El nombre de usuario ya existe." });
+    }
+    return res.status(500).json({
+      message: "Error interno del servidor al registrar usuario.",
+      error: error.message,
+    });
+  }
+});
+
+// 5.2. Ruta POST para iniciar sesión (Login)
+app.post("/api/auth/login", async (req, res) => {
+  const { nombre_usuario, password } = req.body;
+
+  if (!nombre_usuario || !password) {
+    return res
+      .status(400)
+      .json({ message: "Nombre de usuario y contraseña son obligatorios." });
+  }
+
+  try {
+    const usuario = await Usuario.findOne({ where: { nombre_usuario } });
+    if (!usuario) {
+      return res.status(401).json({ message: "Credenciales inválidas." });
+    }
+
+    // Comparar la contraseña proporcionada con el hash almacenado
+    const isMatch = await bcrypt.compare(password, usuario.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Credenciales inválidas." });
+    }
+
+    // Generar un JSON Web Token (JWT)
+    // Incluimos información básica en el payload del token
+    const token = jwt.sign(
+      {
+        id: usuario.id,
+        nombre_usuario: usuario.nombre_usuario,
+        rol: usuario.rol,
+      },
+      process.env.JWT_SECRET, // Usamos la clave secreta del archivo .env
+      { expiresIn: "1h" } // El token expirará en 1 hora
+    );
+
+    return res.status(200).json({
+      message: "Inicio de sesión exitoso.",
+      token,
+      user: {
+        id: usuario.id,
+        nombre_usuario: usuario.nombre_usuario,
+        rol: usuario.rol,
+      },
+    });
+  } catch (error) {
+    console.error("Error al iniciar sesión:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al iniciar sesión.",
+      error: error.message,
+    });
+  }
+});
+
+// 5.3. Middleware de autenticación JWT (para proteger rutas)
+// Esto es un middleware que se ejecutará ANTES de las rutas protegidas.
+// Lo usaremos en capítulos posteriores.
+const authenticateJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization; // El token viene en el header 'Authorization: Bearer <token>'
+
+  if (authHeader) {
+    const token = authHeader.split(" ")[1]; // Extraemos el token después de 'Bearer '
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+      if (err) {
+        // Si el token es inválido o expiró
+        return res
+          .status(403)
+          .json({ message: "Acceso denegado. Token inválido o expirado." });
+      }
+      req.user = user; // Adjuntamos la información del usuario al objeto de solicitud (req)
+      next(); // Continuamos con la siguiente función (la ruta protegida)
+    });
+  } else {
+    return res.status(401).json({
+      message: "Acceso denegado. No se proporcionó token de autenticación.",
+    });
+  }
+};
+
+// 5.4. Ruta de ejemplo protegida (solo para usuarios autenticados)
+// Usaremos el middleware 'authenticateJWT' para proteger esta ruta.
+app.get("/api/users/profile", authenticateJWT, (req, res) => {
+  // Si llegamos aquí, el usuario está autenticado y su información está en req.user
+  return res.status(200).json({
+    message: "Acceso a perfil autorizado.",
+    user: req.user,
+  });
+});
+
+// 5.5. Ruta GET para obtener todos los usuarios (solo para admin - lo implementaremos luego)
+// Por ahora, no protegemos esta ruta con roles específicos, solo autenticación.
+app.get("/api/users", authenticateJWT, async (req, res) => {
+  try {
+    // En un sistema real, aquí verificarías el rol del usuario (ej. req.user.rol === 'admin')
+    // para permitir el acceso a esta lista de usuarios.
+    const usuarios = await Usuario.findAll({
+      attributes: ["id", "nombre_usuario", "rol"], // No enviar password_hash
+    });
+    return res.status(200).json(usuarios);
+  } catch (error) {
+    console.error("Error al obtener usuarios:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener usuarios.",
+      error: error.message,
+    });
+  }
+});
+
 //Ruta básica para verificar que el servidor funciona.
 app.get("/", (req, res) => {
   res.send("Backend del POS de Santísima Pizzería funcionando!");
