@@ -841,6 +841,316 @@ app.get("/api/users", authenticateJWT, async (req, res) => {
     });
   }
 });
+// 6.1. Definición del modelo `Venta`
+// Esta tabla registrará cada transacción de venta.
+const Venta = sequelize.define(
+  "Venta",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    fecha_venta: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW, // La fecha de la venta se registra automáticamente
+    },
+    total: {
+      type: DataTypes.FLOAT,
+      allowNull: false,
+      defaultValue: 0.0, // El total se calculará sumando los detalles
+    },
+    metodo_pago: {
+      type: DataTypes.STRING,
+      allowNull: false, // Ej: 'efectivo', 'tarjeta', 'transferencia'
+    },
+    estado: {
+      type: DataTypes.STRING,
+      defaultValue: "completada", // Ej: 'pendiente', 'completada', 'cancelada'
+    },
+    // `cliente_id` será una clave foránea para el cliente asociado a la venta
+    // `usuario_id` será una clave foránea para el usuario que realizó la venta
+  },
+  {
+    tableName: "ventas",
+    timestamps: false,
+  }
+);
+
+// 6.2. Definición del modelo `VentaDetalle`
+// Esta tabla contendrá cada ítem (producto) dentro de una venta.
+const VentaDetalle = sequelize.define(
+  "VentaDetalle",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    cantidad: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+    },
+    precio_unitario: {
+      type: DataTypes.FLOAT,
+      allowNull: false, // El precio al que se vendió el producto en ese momento
+    },
+    subtotal: {
+      type: DataTypes.FLOAT,
+      allowNull: false, // `cantidad * precio_unitario`
+    },
+    // `venta_id` será una clave foránea para la venta a la que pertenece
+    // `producto_id` será una clave foránea para el producto vendido
+  },
+  {
+    tableName: "ventas_detalles",
+    timestamps: false,
+  }
+);
+
+// 6.3. Definir Relaciones entre Ventas, Clientes, Usuarios y Productos
+
+// Una `Venta` pertenece a un `Cliente` (muchos a uno)
+Venta.belongsTo(Cliente, {
+  foreignKey: "cliente_id",
+  targetKey: "id",
+});
+// Un `Cliente` puede tener muchas `Ventas` (uno a muchos)
+Cliente.hasMany(Venta, {
+  foreignKey: "cliente_id",
+});
+
+// Una `Venta` es realizada por un `Usuario` (muchos a uno)
+Venta.belongsTo(Usuario, {
+  foreignKey: "usuario_id",
+  targetKey: "id",
+});
+// Un `Usuario` puede realizar muchas `Ventas` (uno a muchos)
+Usuario.hasMany(Venta, {
+  foreignKey: "usuario_id",
+});
+
+// Un `VentaDetalle` pertenece a una `Venta` (muchos a uno)
+VentaDetalle.belongsTo(Venta, {
+  foreignKey: "venta_id",
+  targetKey: "id",
+});
+// Una `Venta` puede tener muchos `VentaDetalle` (uno a muchos)
+Venta.hasMany(VentaDetalle, {
+  foreignKey: "venta_id",
+  onDelete: "CASCADE", // Si se elimina una venta, se eliminan sus detalles
+});
+
+// Un `VentaDetalle` se refiere a un `Producto` (muchos a uno)
+VentaDetalle.belongsTo(Producto, {
+  foreignKey: "producto_id",
+  targetKey: "id",
+});
+// Un `Producto` puede estar en muchos `VentaDetalle` (uno a muchos)
+Producto.hasMany(VentaDetalle, {
+  foreignKey: "producto_id",
+});
+
+// 6.4. Ruta POST para registrar una nueva venta
+// Esta ruta requiere autenticación.
+app.post("/api/ventas", authenticateJWT, async (req, res) => {
+  // En una aplicación real, aquí también se validaría el rol del usuario (ej. req.user.rol === 'vendedor' || req.user.rol === 'admin')
+  const { cliente_id, metodo_pago, detalles, total } = req.body; // 'detalles' es un array de objetos { producto_id, cantidad, precio_unitario }
+
+  if (!metodo_pago || !detalles || detalles.length === 0) {
+    return res.status(400).json({
+      message:
+        "Método de pago y al menos un detalle de venta son obligatorios.",
+    });
+  }
+
+  // Si no se proporciona un cliente_id, podemos crear una venta sin cliente asociado (venta al público)
+  // O si quieres que siempre haya un cliente, podrías usar un cliente "Genérico" con ID 1 por ejemplo.
+
+  // Obtenemos el ID del usuario autenticado del token JWT
+  const usuario_id = req.user.id;
+
+  const transaction = await sequelize.transaction(); // Iniciar una transacción para asegurar atomicidad
+
+  try {
+    // 1. Crear la Venta
+    const nuevaVenta = await Venta.create(
+      {
+        cliente_id: cliente_id || null, // Permite ventas sin cliente asociado
+        usuario_id: usuario_id,
+        metodo_pago,
+        total: total || 0, // El total se recalculará o se tomará del frontend, luego se valida
+        estado: "completada",
+      },
+      { transaction }
+    );
+
+    let totalCalculado = 0;
+    const detallesVenta = [];
+
+    // 2. Procesar cada detalle de la venta
+    for (const item of detalles) {
+      const producto = await Producto.findByPk(item.producto_id, {
+        transaction,
+      });
+
+      if (!producto) {
+        await transaction.rollback(); // Deshacer si el producto no existe
+        return res.status(404).json({
+          message: `Producto con ID ${item.producto_id} no encontrado.`,
+        });
+      }
+
+      if (producto.stock < item.cantidad) {
+        await transaction.rollback(); // Deshacer si no hay suficiente stock
+        return res.status(400).json({
+          message: `No hay suficiente stock para ${producto.nombre}. Stock disponible: ${producto.stock}`,
+        });
+      }
+
+      // Usar el precio de venta actual del producto si no se proporciona o es inconsistente
+      const precioUnitarioReal = item.precio_unitario || producto.precio_venta;
+      const subtotalItem = item.cantidad * precioUnitarioReal;
+      totalCalculado += subtotalItem;
+
+      detallesVenta.push({
+        venta_id: nuevaVenta.id,
+        producto_id: item.producto_id,
+        cantidad: item.cantidad,
+        precio_unitario: precioUnitarioReal,
+        subtotal: subtotalItem,
+      });
+
+      // 3. Actualizar el stock del producto
+      await producto.update(
+        { stock: producto.stock - item.cantidad },
+        { transaction }
+      );
+    }
+
+    // 4. Guardar los detalles de la venta
+    await VentaDetalle.bulkCreate(detallesVenta, { transaction });
+
+    // 5. Actualizar el total final de la venta (si no se envió o para asegurar consistencia)
+    await nuevaVenta.update({ total: totalCalculado }, { transaction });
+
+    // 6. Si hay un cliente asociado, actualizar su 'ultima_compra'
+    if (cliente_id) {
+      const cliente = await Cliente.findByPk(cliente_id, { transaction });
+      if (cliente) {
+        await cliente.update({ ultima_compra: new Date() }, { transaction });
+        // NOTA: Para el ticket_promedio necesitaríamos más lógica que la haremos luego.
+      }
+    }
+
+    await transaction.commit(); // Confirmar la transacción
+
+    // Incluimos los detalles y el nombre de los productos/categorías en la respuesta
+    const ventaCompleta = await Venta.findByPk(nuevaVenta.id, {
+      include: [
+        {
+          model: VentaDetalle,
+          include: [
+            {
+              model: Producto,
+              attributes: ["nombre", "descripcion"], // Incluir detalles del producto
+            },
+          ],
+        },
+        {
+          model: Cliente,
+          attributes: ["nombre", "apellido", "telefono"],
+        },
+        {
+          model: Usuario,
+          attributes: ["nombre_usuario"],
+        },
+      ],
+    });
+
+    return res.status(201).json({
+      message: "Venta registrada exitosamente.",
+      venta: ventaCompleta,
+    });
+  } catch (error) {
+    await transaction.rollback(); // Deshacer la transacción si algo falla
+    console.error("Error al registrar venta:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al registrar la venta.",
+      error: error.message,
+    });
+  }
+});
+
+// 6.5. Ruta GET para obtener todas las ventas
+// Esta ruta requiere autenticación.
+app.get("/api/ventas", authenticateJWT, async (req, res) => {
+  try {
+    const ventas = await Venta.findAll({
+      include: [
+        {
+          model: Cliente,
+          attributes: ["nombre", "apellido", "telefono"],
+        },
+        {
+          model: Usuario,
+          attributes: ["nombre_usuario"],
+        },
+      ],
+      order: [["fecha_venta", "DESC"]], // Ordenar por fecha de venta descendente
+    });
+    return res.status(200).json(ventas);
+  } catch (error) {
+    console.error("Error al obtener ventas:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener ventas.",
+      error: error.message,
+    });
+  }
+});
+
+// 6.6. Ruta GET para obtener una venta específica por ID (con sus detalles)
+// Esta ruta requiere autenticación.
+app.get("/api/ventas/:id", authenticateJWT, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const venta = await Venta.findByPk(id, {
+      include: [
+        {
+          model: VentaDetalle,
+          include: [
+            {
+              model: Producto,
+              attributes: ["nombre", "descripcion"],
+            },
+          ],
+        },
+        {
+          model: Cliente,
+          attributes: ["nombre", "apellido", "telefono"],
+        },
+        {
+          model: Usuario,
+          attributes: ["nombre_usuario"],
+        },
+      ],
+    });
+    if (!venta) {
+      return res.status(404).json({ message: "Venta no encontrada." });
+    }
+    return res.status(200).json(venta);
+  } catch (error) {
+    console.error("Error al obtener venta por ID:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor al obtener la venta.",
+      error: error.message,
+    });
+  }
+});
+
+// No implementamos PUT o DELETE para ventas directamente, ya que suelen manejarse
+// con reversiones o anulaciones, no con modificación o eliminación directa de registros históricos.
 
 //Ruta básica para verificar que el servidor funciona.
 app.get("/", (req, res) => {
